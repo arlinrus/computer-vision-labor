@@ -1,0 +1,16 @@
+# Python 3.11-3.12, CUDA GPU (см. README -> системные требования)
+torch==2.15.0
+torchvision==0.29.2
+diffusers==0.42.1
+transformers==5.22.2
+accelerate==1.15.0
+safetensors==0.8.0
+huggingface_hub==2.4.0
+sentencepiece==0.2.3
+pyiqa==0.1.16
+numpy==2.5.4
+opencv-python-headless==5.0.0.93
+pillow==13.0.0
+pandas==3.1.1
+tabulate==0.10.0
+matplotlib==3.11.2
