@@ -49,7 +49,7 @@ def load_pipeline(dtype=torch.float16, cpu_offload: bool = False, scheduler: str
                                                 variant="fp16", use_safetensors=True)
     pipe.unet.load_additional_layers(weight_path=weights, dtype=dtype)
     pipe.set_encoder_tile_settings()
-    pipe.enable_vae_tiling()
+    pipe.vae.enable_tiling()
     if cpu_offload:
         pipe.enable_model_cpu_offload()
     else:
@@ -253,7 +253,7 @@ def masked_super_resolve(
     # --- 6. Декодирование -------------------------------------------------------
     upcast = pipe.vae.dtype == torch.float16 and pipe.vae.config.force_upcast
     if upcast:
-        pipe.upcast_vae()
+        pipe.vae.to(dtype=torch.float32)
     latents = latents.to(next(iter(pipe.vae.post_quant_conv.parameters())).dtype)
     img = pipe.vae.decode(latents / pipe.vae.config.scaling_factor, return_dict=False)[0]
     if upcast:
