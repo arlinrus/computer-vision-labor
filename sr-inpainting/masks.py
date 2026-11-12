@@ -2,7 +2,7 @@ import numpy as np
 from PIL import Image
 
 def make_mask(kind:str, h:int, w:int) -> np.array:
-    m = np.zeros((h,w), np.unit)
+    m = np.zeros((h,w), np.unit8)
     if kind == "ones":
         m[:]=1
     elif kind == "zeros":
