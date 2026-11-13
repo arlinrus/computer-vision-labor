@@ -7,7 +7,7 @@ from PIL import Image
 import config
 
 
-def to_tensor(img: Image.Image) -> torch.Tensor:
+def to_tensor(img: Image.Image) -> torch.Tensor: # +
     return torch.from_numpy(np.asarray(img).astype(np.float32) / 255.0).permute(2, 0, 1)[None]
  
 def to_pil(x: torch.Tensor) -> Image.Image:
@@ -15,16 +15,16 @@ def to_pil(x: torch.Tensor) -> Image.Image:
     return Image.fromarray((x * 255).round().astype(np.uint8))
 
 @torch.no_grad()
-def masked_sr(pipe, lr: Image.Image, mask: np.ndarray) -> Image.Image:
+def masked_sr(pipe, lr: Image.Image, mask: np.ndarray) -> Image.Image: # +
     assert mask.shape == (lr.height, lr.width), "маска должна совпадать по размеру со входом"
     assert max(lr.size) <= 256 and lr.width % 2 == 0 and lr.height % 2 == 0, "вход до 256x256, чётные стороны"
     device, dtype = torch.device("cuda"), torch.float16
     W, H = lr.width * config.UPSCALE, lr.height * config.UPSCALE #размер выхода 256 на 4
 
-    up = lr.resize((W, H), Image.BICUBIC)                       
+    up = lr.resize((W, H), Image.BICUBIC)           # бикубика 256 -> 1024           
     if mask.sum() == 0:                                         # маска пустая -> модель не нужна
         return up
-    mask_hr = torch.from_numpy(mask.astype(np.float32))[None, None]       # [1, 1, 256, 256]
+    mask_hr = torch.from_numpy(mask.astype(np.float32))[None, None]       # переводит в pytorch и растягивает маску[1, 1, 256, 256]
     mask_hr = F.interpolate(mask_hr, size=(H, W), mode="nearest").to(device)  # [1, 1, 1024, 1024], всё ещё 0/1
 
     pos, neg, pos_pooled, neg_pooled = pipe.encode_prompt(
@@ -38,7 +38,7 @@ def masked_sr(pipe, lr: Image.Image, mask: np.ndarray) -> Image.Image:
     cond = pipe.prepare_image_latents(x, 1, 1, dtype, device, True)  # признаки от энкодера FaithDiff
 
     z_ref = pipe.vae.encode(x.to(pipe.vae.dtype)).latent_dist.mode() * pipe.vae.config.scaling_factor
-    z_ref = z_ref.to(dtype)                                     # [1, 4, 128, 128] — «как было»
+    z_ref = z_ref.to(dtype)                                     # [1, 4, 128, 128] «как было» бикубическая картинка сжимается в латент(вне маски)
     m = F.max_pool2d(mask_hr, kernel_size=8).to(dtype)          # маска 1024 -> 128: латентный пиксель = 1,
                                                                 # если в его квадрате 8x8 есть хоть одна единица
 
@@ -47,7 +47,7 @@ def masked_sr(pipe, lr: Image.Image, mask: np.ndarray) -> Image.Image:
     gen = torch.Generator(device=device).manual_seed(config.SEED)
     noise = torch.randn(z_ref.shape, generator=gen, device=device, dtype=dtype)
 
-    def noisy_ref(t: int) -> torch.Tensor:
+    def noisy_ref(t: int) -> torch.Tensor:  # функция зашумления
         if t <= 0:
             return z_ref
         return pipe.DDPMScheduler.add_noise(z_ref, noise, torch.tensor([t], device=device))
@@ -69,8 +69,8 @@ def masked_sr(pipe, lr: Image.Image, mask: np.ndarray) -> Image.Image:
 
         latents = pipe.scheduler.step(eps, t, latents, return_dict=False)[0].to(dtype)
 
-        t_next = int(timesteps[i + 1]) if i + 1 < len(timesteps) else 0
-        latents = m * latents + (1 - m) * noisy_ref(t_next)
+        t_next = int(timesteps[i + 1]) if i + 1 < len(timesteps) else 0 # уровень шума, до которого очистился латент 
+        latents = m * latents + (1 - m) * noisy_ref(t_next) # там, где маска 1, остается то, что нарисовала модель, там где маска 0 подставляется исходная картинка
 
     img = pipe.vae.decode((latents / pipe.vae.config.scaling_factor).to(pipe.vae.dtype), return_dict=False)[0]
     sr = ((img.float() + 1) / 2).clamp(0, 1)                    

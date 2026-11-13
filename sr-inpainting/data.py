@@ -35,12 +35,12 @@ def seed_of(name: str) -> int:
     return zlib.crc32(name.encode())
 
 
-def bicubic_degrade(hr: np.ndarray) -> np.ndarray:
+def bicubic_degrade(hr: np.ndarray) -> np.ndarray: # простое уменьшение
     h, w = hr.shape[:2]
     return np.array(Image.fromarray(hr).resize((w // 4, h // 4), Image.BICUBIC))
 
 
-def unknown_degrade(hr: np.ndarray, seed: int) -> np.ndarray:
+def unknown_degrade(hr: np.ndarray, seed: int) -> np.ndarray: # размытие + уменьшение
     rng = np.random.default_rng(seed)
     sx, sy = rng.uniform(0.8, 3.0, size=2)                     
     angle = rng.uniform(0, np.pi)                             
@@ -55,7 +55,7 @@ def unknown_degrade(hr: np.ndarray, seed: int) -> np.ndarray:
     return cv2.resize(img, (w // 4, h // 4), interpolation=cv2.INTER_CUBIC)
 
 
-def realesrgan_degrade(hr: np.ndarray, seed: int) -> np.ndarray:
+def realesrgan_degrade(hr: np.ndarray, seed: int) -> np.ndarray: # изначальная
     rng = np.random.default_rng(seed)
     img = cv2.GaussianBlur(hr, (0, 0), rng.uniform(1.0, 2.5))                         
     h, w = hr.shape[:2]
