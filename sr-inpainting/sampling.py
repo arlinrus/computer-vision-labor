@@ -14,7 +14,6 @@ def to_pil(x: torch.Tensor) -> Image.Image:
     x = x[0].clamp(0, 1).permute(1, 2, 0).float().cpu().numpy()
     return Image.fromarray((x * 255).round().astype(np.uint8))
 
-
 @torch.no_grad()
 def masked_sr(pipe, lr: Image.Image, mask: np.ndarray) -> Image.Image:
     assert mask.shape == (lr.height, lr.width), "маска должна совпадать по размеру со входом"

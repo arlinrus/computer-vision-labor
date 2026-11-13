@@ -1,55 +1,80 @@
-import io
-import urllib.request
-import zipfile
+import zlib
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 import config
 
-URLS = {                                     
-    "hr": "https://data.vision.ee.ethz.ch/cvl/DIV2K/DIV2K_valid_HR.zip",              # эталоны
-    "bicubic": "https://data.vision.ee.ethz.ch/cvl/DIV2K/DIV2K_valid_LR_bicubic_X4.zip",  # уменьшены x4 бикубикой
-    "unknown": "https://data.vision.ee.ethz.ch/cvl/DIV2K/DIV2K_valid_LR_unknown_X4.zip",  # x4 с неизвестным размытием
-}
+
+def load_photo(name: str) -> np.ndarray:
+    for ext in (".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"):
+        path = config.PHOTOS_DIR / f"{name}{ext}"
+        if path.exists():
+            img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")   # учесть поворот фото с телефона
+            return np.array(img)
+    raise FileNotFoundError(f"нет файла {name}.jpg/.png в {config.PHOTOS_DIR}")
 
 
-def read_from_zip(kind: str, name_end: str) -> np.ndarray:
-    path = config.DATA_DIR / f"{kind}.zip"
-    if not path.exists():
-        config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-        print("скачиваю", URLS[kind])
-        urllib.request.urlretrieve(URLS[kind], path)
-    with zipfile.ZipFile(path) as z:
-        name = next(n for n in z.namelist() if n.endswith(name_end))
-        return np.array(Image.open(io.BytesIO(z.read(name))).convert("RGB"))
+def best_crop(img: np.ndarray, size: int) -> np.ndarray:
+    assert min(img.shape[:2]) >= size, f"фото меньше {size} px по короткой стороне"
+    k = 4                                                      
+    g = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    small = cv2.resize(g, (g.shape[1] // k, g.shape[0] // k), interpolation=cv2.INTER_AREA)
+    s, step = size // k, 32 // k
+    best, by, bx = -1.0, 0, 0
+    for y in range(0, small.shape[0] - s + 1, step):
+        for x in range(0, small.shape[1] - s + 1, step):
+            v = cv2.Laplacian(small[y:y + s, x:x + s], cv2.CV_32F).var()
+            if v > best:
+                best, by, bx = v, y * k, x * k
+    return img[by:by + size, bx:bx + size]
+
+
+def seed_of(name: str) -> int:
+    return zlib.crc32(name.encode())
+
+
+def bicubic_degrade(hr: np.ndarray) -> np.ndarray:
+    h, w = hr.shape[:2]
+    return np.array(Image.fromarray(hr).resize((w // 4, h // 4), Image.BICUBIC))
+
+
+def unknown_degrade(hr: np.ndarray, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    sx, sy = rng.uniform(0.8, 3.0, size=2)                     
+    angle = rng.uniform(0, np.pi)                             
+    r = 10
+    yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
+    u = xx * np.cos(angle) + yy * np.sin(angle)
+    v = -xx * np.sin(angle) + yy * np.cos(angle)
+    kernel = np.exp(-(u ** 2 / (2 * sx ** 2) + v ** 2 / (2 * sy ** 2)))
+    kernel /= kernel.sum()                                     
+    img = cv2.filter2D(hr, -1, kernel)
+    h, w = hr.shape[:2]
+    return cv2.resize(img, (w // 4, h // 4), interpolation=cv2.INTER_CUBIC)
 
 
 def realesrgan_degrade(hr: np.ndarray, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
-    img = cv2.GaussianBlur(hr, (0, 0), rng.uniform(1.0, 2.5))                         # размытие
+    img = cv2.GaussianBlur(hr, (0, 0), rng.uniform(1.0, 2.5))                         
     h, w = hr.shape[:2]
-    img = cv2.resize(img, (w // 4, h // 4), interpolation=cv2.INTER_AREA)             # уменьшение в 4 раза
-    img = img.astype(np.float32) + rng.normal(0, rng.uniform(5, 15), img.shape)       # гауссов шум
+    img = cv2.resize(img, (w // 4, h // 4), interpolation=cv2.INTER_AREA)            
+    img = img.astype(np.float32) + rng.normal(0, rng.uniform(5, 15), img.shape)       
     img = np.clip(img, 0, 255).astype(np.uint8)
-    q = int(rng.integers(30, 60))                                                     # качество JPEG 30..60
+    q = int(rng.integers(30, 60))                                                    
     ok, buf = cv2.imencode(".jpg", cv2.cvtColor(img, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, q])
     return cv2.cvtColor(cv2.imdecode(buf, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
 
 
-def get_pair(img_id: str, degradation: str):
-    s, k = config.LR_SIZE, config.UPSCALE
-    hr_full = read_from_zip("hr", f"/{img_id}.png")
-    y0 = (hr_full.shape[0] // k - s) // 2                       # координаты центра в масштабе LR
-    x0 = (hr_full.shape[1] // k - s) // 2
-    hr = hr_full[y0 * k:(y0 + s) * k, x0 * k:(x0 + s) * k]      # эталон 1024x1024
-
-    if degradation in ("bicubic", "unknown"):
-        lr_full = read_from_zip(degradation, f"/{img_id}x4.png")
-        lr = lr_full[y0:y0 + s, x0:x0 + s]                      # тот же кусок из готовой плохой версии
+def get_pair(name: str, degradation: str):
+    hr = best_crop(load_photo(name), config.LR_SIZE * config.UPSCALE)   # эталон 1024x1024
+    if degradation == "bicubic":
+        lr = bicubic_degrade(hr)
+    elif degradation == "unknown":
+        lr = unknown_degrade(hr, seed_of(name))
     elif degradation == "realesrgan":
-        lr = realesrgan_degrade(hr, seed=int(img_id))           # портим сами
+        lr = realesrgan_degrade(hr, seed_of(name))
     else:
         raise ValueError(degradation)
     return np.ascontiguousarray(lr), np.ascontiguousarray(hr)

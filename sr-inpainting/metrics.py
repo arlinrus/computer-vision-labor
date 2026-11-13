@@ -1,10 +1,8 @@
-"""Метрики: PSNR (точность пикселей), LPIPS (похожесть «на глаз»), CLIP-IQA (качество без эталона)."""
 import numpy as np
 import torch
 
 
 def psnr(pred: np.ndarray, gt: np.ndarray, region: np.ndarray | None = None) -> float:
-    """PSNR по яркости (Y), как принято в SR. region — считать только по этим пикселям."""
     def y(img):                                             # RGB -> яркость Y
         x = img.astype(np.float64)
         return 16 + (65.481 * x[..., 0] + 128.553 * x[..., 1] + 24.966 * x[..., 2]) / 255
